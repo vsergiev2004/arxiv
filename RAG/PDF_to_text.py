@@ -2,14 +2,54 @@ import os
 import pymupdf  # PyMuPDF
 from collections import Counter
 import re
-from transformers import AutoTokenizer
+#from transformers import AutoTokenizer
 import json
 import numpy as np
-from FlagEmbedding import FlagModel
+#from FlagEmbedding import FlagModel
+import unicodedata
+
+
+
+def delete_latex(text:str) ->  str:
+    text = re.sub(r"\\(mathbb|mathcal|mathfrak|mathbf|mathrm)\{([A-Za-z])\}", r"\2", text)
+    text = re.sub(r"\^\{?([a-zA-Z0-9])\}?", r"\1", text)
+    text = re.sub(r"_\{?([a-zA-Z0-9])\}?", r"\1", text)
+    text = re.sub(r"\\[a-zA-Z0-9]+", " ", text)
+    for ch in "$[{}\\]":
+        text.replace(ch, "")
+    return text
+
+
+
+def clean_pdf_text(text: str) -> str:
+
+    # 1) выкидываем управляющие символы (\x00 и т.п.), кроме \n и \t
+    text = "".join(
+        ch for ch in text
+        if ch in "\n\t" or unicodedata.category(ch)[0] != "C"
+    )
+
+    # 2) нестандартные пробелы → обычный пробел
+    text = re.sub(r"[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]", " ", text)
+
+    # 3) оставляем буквы, цифры, пунктуацию и базовую математику
+    keep = set("+=<>~^$±×÷≤≥≠≈∞√∑∏∫∂∆°")
+    text = "".join(
+        ch if (ch.isspace() or unicodedata.category(ch)[0] in "LNP" or ch in keep)
+        else " "
+        for ch in text
+    )
+
+    # 4) причёсываем пробелы
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
 
 
 def extract_blocks(pdf_path):
-    doc = pymupdf.open(pdf_path)
+    doc = pymupdf.open(pdf_path, filetype="txt")
     blocks = []
     for page_num, page in enumerate(doc):
         page_height = page.rect.height
@@ -91,7 +131,7 @@ def make_sent_block(blocks):
     x0 = 0
     for b in blocks:
         page = b["page"]
-        text = b["text"]
+        text = clean_pdf_text(b["text"]) #delete_latex(b["text"])
         font_size = b["font_size"]
 
         if sent_text == []:
@@ -117,7 +157,9 @@ def make_sent_block(blocks):
         if len(sent_pages) == 0 or page != sent_pages[-1]:
                 sent_pages.append(page)
         
-        if text[-1] == "-":
+        if len(text) == 0:
+            continue
+        elif text[-1] == "-":
             sent_text.append(text[:-1])
         elif text[-1] in ".;:!?□":
             sent_text.append(text)
@@ -254,6 +296,10 @@ def split_by_tokens(text, tokenizer, max_tokens):
             cur_tok += t
     if cur:
         yield " ".join(cur)
+
+
+
+
 
 
 def make_chunks_block(items, tokenizer, max_tokens=512, min_tokens=256):
@@ -398,10 +444,10 @@ def x0_counter(blocks):
 
 
 def main():
-    _tok = AutoTokenizer.from_pretrained("BAAI/bge-small-en-v1.5")
+    #_tok = AutoTokenizer.from_pretrained("BAAI/bge-small-en-v1.5")
     # поднимаем лимит, чтобы encode() не ругался — используем только для подсчёта токенов
-    _tok.model_max_length = 10**9
-    tokenizer = lambda s: len(_tok.encode(s, add_special_tokens=False))
+    #_tok.model_max_length = 10**9
+    #tokenizer = lambda s: len(_tok.encode(s, add_special_tokens=False))
 
     '''
     model = BGEM3FlagModel("BAAI/bge-small-en-v1.5", use_fp16=True)
@@ -415,17 +461,21 @@ def main():
     all_chunks = []
 
     for name in os.listdir(datadir):
-        if not name.lower().endswith(".pdf"):
-            continue
-        pdf_path = os.path.join(datadir, name)
 
-        blocks = extract_blocks(pdf_path)
+        if not name.lower().endswith(".tex") or name != "Affine_toric_emb.tex":
+            continue
+        tex_path = os.path.join(datadir, name)
+
+        blocks = extract_blocks(tex_path)
         headers = find_running_headers(blocks)
         clean_blocks = remove_running_headers(blocks, headers)
         sentance_block = make_sent_block(clean_blocks)
         abzats_block = make_abzats_block(sentance_block)
 
-        chunks = make_chunks_block(abzats_block, tokenizer=tokenizer)
+        for i in range(0, len(abzats_block)):
+            print(abzats_block[i])
+
+    ''' chunks = make_chunks_block(abzats_block, tokenizer=tokenizer)
         for i, c in enumerate(chunks):
             c["doc_name"] = name
             c["chunk_id"] = f"{name}::{i}"
@@ -434,7 +484,7 @@ def main():
     with open(os.path.join(outdir, "brain_chunks.json"), "w", encoding="utf-8") as f:
         for c in all_chunks:
             f.write(json.dumps(c, ensure_ascii=False) + "\n")
-
+'''
 
 if __name__ == "__main__":
     main()
