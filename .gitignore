@@ -78,6 +78,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+RAG/make_RAG_data.ipynb
 
 # IPython
 profile_default/
@@ -228,3 +229,4 @@ RAG/RAG_science_data/
 RAG/RAG_data/
 
 token_git
+.gigacode_vsc
